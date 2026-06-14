@@ -58,6 +58,24 @@ export CODEX_HISTORY_HTML_BACKEND=codex-transcripts
 If the requested external backend is not installed on `PATH`, the tool falls
 back automatically to the builtin HTML exporter.
 
+### Command Override
+
+If you prefer to run an external exporter through a wrapper command instead of a
+plain executable on `PATH`, set:
+
+```bash
+export CODEX_HISTORY_HTML_BACKEND_CMD='uvx --from git+https://github.com/prateek/codex-transcripts codex-transcripts json {input} -o {output_dir}'
+```
+
+The archiver will use that command first for HTML export and substitute:
+
+- `{input}` for the transcript path
+- `{output}` for the output HTML path
+- `{output_dir}` for a temporary output directory
+
+When `CODEX_HISTORY_HTML_BACKEND_CMD` is set, it takes precedence over the
+named backend selection.
+
 ## Archive Layout
 
 The archive location is controlled by an environment variable:
@@ -124,6 +142,7 @@ For WSL2 or Ubuntu, add the export to a login-shell startup file such as
 ```bash
 export CODEX_HISTORY_ARCHIVE_ROOT="/mnt/c/Users/your-user/codex-history-archive"
 export CODEX_HISTORY_HTML_BACKEND="codex-transcripts"
+export CODEX_HISTORY_HTML_BACKEND_CMD='uvx --from git+https://github.com/prateek/codex-transcripts codex-transcripts json {input} -o {output_dir}'
 ```
 
 Then restart VS Code so the remote WSL extension host and Codex pick it up.
@@ -162,6 +181,11 @@ cd C:\Users\your-user\dev\codex-history-archiver
 [Environment]::SetEnvironmentVariable(
   "CODEX_HISTORY_HTML_BACKEND",
   "codex-transcripts",
+  "User"
+)
+[Environment]::SetEnvironmentVariable(
+  "CODEX_HISTORY_HTML_BACKEND_CMD",
+  "uvx --from git+https://github.com/prateek/codex-transcripts codex-transcripts json {input} -o {output_dir}",
   "User"
 )
 ```

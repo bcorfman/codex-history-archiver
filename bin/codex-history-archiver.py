@@ -6,6 +6,7 @@ import html
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -224,6 +225,23 @@ def render_html(meta: dict, messages: list[dict]) -> str:
 def render_html_with_backend(
     backend: str, transcript_path: Path, html_path: Path, meta: dict, messages: list[dict]
 ) -> str:
+    backend_cmd = os.environ.get("CODEX_HISTORY_HTML_BACKEND_CMD")
+    if backend_cmd:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rendered = backend_cmd.format(
+                input=shlex.quote(str(transcript_path)),
+                output=shlex.quote(str(html_path)),
+                output_dir=shlex.quote(tmpdir),
+            )
+            result = subprocess.run(rendered, shell=True, capture_output=True, text=True)
+            generated = Path(tmpdir) / "index.html"
+            if result.returncode == 0:
+                if generated.exists():
+                    html_path.write_text(generated.read_text())
+                    return "command-override"
+                if html_path.exists():
+                    return "command-override"
+
     if backend == "codex-transcripts":
         executable = shutil.which("codex-transcripts")
         if executable:
