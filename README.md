@@ -215,3 +215,67 @@ Those tools are useful, but this repo solves a narrower operational problem:
 - The Markdown and HTML are derived convenience exports.
 - The VS Code UI may still show only a recent subset of threads, but the full
   archived session set remains available on disk.
+
+## Troubleshooting
+
+### `CODEX_HISTORY_ARCHIVE_ROOT` is not visible to Codex
+
+Symptoms:
+
+- no archive files are written
+- the hook returns a message saying the archive root is not set
+
+Checks:
+
+- On WSL2/Linux:
+
+```bash
+bash -lc 'echo "$CODEX_HISTORY_ARCHIVE_ROOT"'
+```
+
+- On Windows:
+
+```powershell
+$env:CODEX_HISTORY_ARCHIVE_ROOT
+```
+
+Fix:
+
+- make sure the variable is set persistently
+- restart VS Code completely after setting it
+- on WSL2, prefer a login-shell startup file such as `.bash_profile`
+
+### Hook is installed but does not seem to fire
+
+Checks:
+
+- confirm the hook block exists in `~/.codex/config.toml`
+- confirm the repo/project is trusted in Codex
+- finish a full Codex turn in the VS Code extension, then inspect the archive
+  root
+
+Reinstall:
+
+```bash
+python3 bin/install-hook.py --config ~/.codex/config.toml
+```
+
+Windows:
+
+```powershell
+py -3 .\bin\install-hook.py --config $HOME\.codex\config.toml
+```
+
+### Archive files appear under the wrong project slug
+
+The tool uses `git rev-parse --show-toplevel` when available and falls back to
+the current working directory otherwise.
+
+Checks:
+
+- verify the Codex session is actually running in the repo you expect
+- verify that repo is a real Git checkout
+- compare the session `cwd` stored in the exported `.meta.json` file
+
+If needed, you can still find the transcript by session ID in the archive even
+if the project slug is not what you expected.
