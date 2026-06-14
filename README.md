@@ -71,6 +71,37 @@ another login-shell startup file that Codex will inherit.
 For native Windows, set `CODEX_HISTORY_ARCHIVE_ROOT` as a user environment
 variable.
 
+### Windows Persistent User Env Var
+
+PowerShell:
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+  "CODEX_HISTORY_ARCHIVE_ROOT",
+  "C:\\Users\\your-user\\codex-history-archive",
+  "User"
+)
+```
+
+Then restart VS Code so the Codex extension inherits the updated environment.
+
+To verify in a new PowerShell session:
+
+```powershell
+$env:CODEX_HISTORY_ARCHIVE_ROOT
+```
+
+### WSL2 Persistent Env Var
+
+For WSL2 or Ubuntu, add the export to a login-shell startup file such as
+`.bash_profile`:
+
+```bash
+export CODEX_HISTORY_ARCHIVE_ROOT="/mnt/c/Users/your-user/codex-history-archive"
+```
+
+Then restart VS Code so the remote WSL extension host and Codex pick it up.
+
 ## Install
 
 ```bash
@@ -83,6 +114,48 @@ This appends or updates a managed hook block in `~/.codex/config.toml`.
   variables are available.
 - On Windows, run the installer from a Windows checkout so it can generate the
   Windows-specific hook command.
+
+### Non-WSL Windows Install Flow
+
+1. Clone the repo in Windows, for example:
+
+```powershell
+git clone https://github.com/bcorfman/codex-history-archiver.git `
+  C:\Users\your-user\dev\codex-history-archiver
+cd C:\Users\your-user\dev\codex-history-archiver
+```
+
+2. Set the persistent user environment variable:
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+  "CODEX_HISTORY_ARCHIVE_ROOT",
+  "C:\\Users\\your-user\\codex-history-archive",
+  "User"
+)
+```
+
+3. Install the hook into your Codex config:
+
+```powershell
+py -3 .\bin\install-hook.py --config $HOME\.codex\config.toml
+```
+
+4. Restart VS Code.
+
+5. Finish a Codex turn and verify files appear under:
+
+```powershell
+Get-ChildItem -Recurse $env:CODEX_HISTORY_ARCHIVE_ROOT
+```
+
+### Non-WSL Windows Backfill
+
+After installing, you can backfill existing sessions with:
+
+```powershell
+py -3 .\bin\backfill-history.py
+```
 
 ## Verify
 
