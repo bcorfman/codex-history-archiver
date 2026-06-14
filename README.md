@@ -38,6 +38,26 @@ This project uses that event to:
 3. regenerate Markdown and HTML exports for that session
 4. regenerate a per-project session index
 
+## Export Backends
+
+- Markdown: builtin only, for now
+- HTML: builtin by default, with optional PATH-based external backends
+
+Supported HTML backend values:
+
+- `builtin`
+- `codex-transcripts`
+- `codex-transcript-viewer`
+
+Set with:
+
+```bash
+export CODEX_HISTORY_HTML_BACKEND=codex-transcripts
+```
+
+If the requested external backend is not installed on `PATH`, the tool falls
+back automatically to the builtin HTML exporter.
+
 ## Archive Layout
 
 The archive location is controlled by an environment variable:
@@ -81,6 +101,11 @@ PowerShell:
   "C:\\Users\\your-user\\codex-history-archive",
   "User"
 )
+[Environment]::SetEnvironmentVariable(
+  "CODEX_HISTORY_HTML_BACKEND",
+  "codex-transcripts",
+  "User"
+)
 ```
 
 Then restart VS Code so the Codex extension inherits the updated environment.
@@ -98,6 +123,7 @@ For WSL2 or Ubuntu, add the export to a login-shell startup file such as
 
 ```bash
 export CODEX_HISTORY_ARCHIVE_ROOT="/mnt/c/Users/your-user/codex-history-archive"
+export CODEX_HISTORY_HTML_BACKEND="codex-transcripts"
 ```
 
 Then restart VS Code so the remote WSL extension host and Codex pick it up.
@@ -131,6 +157,11 @@ cd C:\Users\your-user\dev\codex-history-archiver
 [Environment]::SetEnvironmentVariable(
   "CODEX_HISTORY_ARCHIVE_ROOT",
   "C:\\Users\\your-user\\codex-history-archive",
+  "User"
+)
+[Environment]::SetEnvironmentVariable(
+  "CODEX_HISTORY_HTML_BACKEND",
+  "codex-transcripts",
   "User"
 )
 ```
@@ -188,10 +219,6 @@ archiving from the Codex hook system.
 
 If you want richer browsing or standalone export tools, these are worth a look:
 
-- `codex-export`
-  Markdown export for Codex sessions, including Codex Desktop/CLI style flows.
-- `codex-transcript-viewer`
-  Single-session HTML viewer with a richer browser UI.
 - `agent-trace`
   Terminal UI for browsing and exporting local session histories.
 - `CodexMonitor`
@@ -199,6 +226,11 @@ If you want richer browsing or standalone export tools, these are worth a look:
   support.
 - `codex-trace-viewer`
   Local trace viewer focused on inspecting session internals.
+- `codex-transcript-viewer`
+  Single-session HTML viewer with a richer browser UI.
+- `codex-transcripts`
+  More capable HTML/TUI/export tool with picker flows, multi-select archives,
+  `--cwd` filtering, and one-off `uvx` usage.
 
 ## Why This Exists
 
@@ -208,6 +240,10 @@ Those tools are useful, but this repo solves a narrower operational problem:
 - work well with the Codex VS Code extension on WSL2
 - keep raw transcripts plus readable exports
 - keep the archive path private and outside the public repo
+
+`codex-transcripts` is the recommended optional HTML backend because it is the
+most capable of the current external HTML exporters while still being easy to
+install and invoke from the command line.
 
 ## Notes
 

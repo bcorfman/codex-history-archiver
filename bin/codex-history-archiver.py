@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -26,6 +27,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--transcript-path", help="Override transcript path.")
     parser.add_argument("--cwd", help="Override current working directory.")
     parser.add_argument("--session-id", help="Override session id.")
+    parser.add_argument(
+        "--html-backend",
+        default=os.environ.get("CODEX_HISTORY_HTML_BACKEND", "builtin"),
+        help="HTML backend: builtin, codex-transcripts, or codex-transcript-viewer.",
+    )
     return parser.parse_args()
 
 
@@ -215,7 +221,51 @@ def render_html(meta: dict, messages: list[dict]) -> str:
 """
 
 
-def write_session_exports(project_dir: Path, session_meta: dict, messages: list[dict], transcript_path: Path) -> dict:
+def render_html_with_backend(
+    backend: str, transcript_path: Path, html_path: Path, meta: dict, messages: list[dict]
+) -> str:
+    if backend == "codex-transcripts":
+        executable = shutil.which("codex-transcripts")
+        if executable:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                result = subprocess.run(
+                    [
+                        executable,
+                        "json",
+                        str(transcript_path),
+                        "-o",
+                        tmpdir,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                generated = Path(tmpdir) / "index.html"
+                if result.returncode == 0 and generated.exists():
+                    html_path.write_text(generated.read_text())
+                    return "codex-transcripts"
+
+    if backend == "codex-transcript-viewer":
+        executable = shutil.which("codex-transcript-viewer")
+        if executable:
+            result = subprocess.run(
+                [executable, str(transcript_path), str(html_path)],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0 and html_path.exists():
+                return "codex-transcript-viewer"
+
+    html_path.write_text(render_html(meta, messages))
+    return "builtin"
+
+
+def write_session_exports(
+    project_dir: Path,
+    session_meta: dict,
+    messages: list[dict],
+    transcript_path: Path,
+    html_backend: str,
+) -> dict:
     sessions_dir = project_dir / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
@@ -227,7 +277,11 @@ def write_session_exports(project_dir: Path, session_meta: dict, messages: list[
 
     shutil.copyfile(transcript_path, raw_path)
     md_path.write_text(render_markdown(session_meta, messages))
-    html_path.write_text(render_html(session_meta, messages))
+    session_meta = dict(session_meta)
+    session_meta["html_backend_requested"] = html_backend
+    session_meta["html_backend_used"] = render_html_with_backend(
+        html_backend, transcript_path, html_path, session_meta, messages
+    )
     meta_path.write_text(json.dumps(session_meta, indent=2) + "\n")
 
     return {
@@ -358,7 +412,7 @@ def main() -> int:
 
     parsed = parse_transcript(transcript_path)
     project_dir, meta = build_metadata(payload, parsed, transcript_path, archive_root)
-    write_session_exports(project_dir, meta, parsed["messages"], transcript_path)
+    write_session_exports(project_dir, meta, parsed["messages"], transcript_path, args.html_backend)
     rebuild_project_index(project_dir)
 
     print(json.dumps({"continue": True}))
