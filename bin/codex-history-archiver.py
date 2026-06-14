@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 
@@ -48,6 +49,19 @@ def load_hook_payload(args: argparse.Namespace) -> dict:
 def sanitize_slug(value: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-")
     return slug or "unknown-project"
+
+
+def format_local_timestamp(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = value.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return value
+    if dt.tzinfo is None:
+        return value
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 def git_root_for(cwd: Path) -> Path | None:
@@ -139,7 +153,7 @@ def render_markdown(meta: dict, messages: list[dict]) -> str:
         f"- Project: `{meta['project_slug']}`",
         f"- CWD: `{meta['cwd']}`",
         f"- Transcript: `{meta['transcript_source']}`",
-        f"- Updated: `{meta['updated_at']}`",
+        f"- Updated: `{meta['updated_at_local']}`",
         "",
     ]
     body: list[str] = []
@@ -150,7 +164,7 @@ def render_markdown(meta: dict, messages: list[dict]) -> str:
             [
                 f"## {role}{phase}",
                 "",
-                f"_Timestamp: `{message['timestamp']}`_",
+                f"_Timestamp: `{message['timestamp_local']}`_",
                 "",
                 message["text"],
                 "",
@@ -168,7 +182,7 @@ def render_html(meta: dict, messages: list[dict]) -> str:
         rows.append(
             "<section class='message'>"
             f"<h2>{html.escape(role + phase)}</h2>"
-            f"<p class='timestamp'>{html.escape(str(message['timestamp']))}</p>"
+            f"<p class='timestamp'>{html.escape(str(message['timestamp_local']))}</p>"
             f"<pre>{html.escape(message['text'])}</pre>"
             "</section>"
         )
@@ -214,7 +228,7 @@ def render_html(meta: dict, messages: list[dict]) -> str:
     <p><strong>Project:</strong> <code>{html.escape(meta["project_slug"])}</code></p>
     <p><strong>CWD:</strong> <code>{html.escape(meta["cwd"])}</code></p>
     <p><strong>Transcript:</strong> <code>{html.escape(meta["transcript_source"])}</code></p>
-    <p><strong>Updated:</strong> <code>{html.escape(meta["updated_at"])}</code></p>
+    <p><strong>Updated:</strong> <code>{html.escape(meta["updated_at_local"])}</code></p>
   </div>
   {''.join(rows)}
 </body>
@@ -332,7 +346,7 @@ def rebuild_project_index(project_dir: Path) -> None:
             [
                 f"## {title}",
                 "",
-                f"- Updated: `{updated_at}`",
+                f"- Updated: `{item.get('updated_at_local', updated_at)}`",
                 f"- Session ID: `{session_id}`",
                 f"- [Markdown](sessions/{session_id}.md)",
                 f"- [HTML](sessions/{session_id}.html)",
@@ -343,7 +357,7 @@ def rebuild_project_index(project_dir: Path) -> None:
         html_rows.append(
             "<tr>"
             f"<td>{html.escape(title)}</td>"
-            f"<td><code>{html.escape(updated_at)}</code></td>"
+            f"<td><code>{html.escape(item.get('updated_at_local', updated_at))}</code></td>"
             f"<td><a href='sessions/{html.escape(session_id)}.md'>md</a></td>"
             f"<td><a href='sessions/{html.escape(session_id)}.html'>html</a></td>"
             f"<td><a href='sessions/{html.escape(session_id)}.jsonl'>raw</a></td>"
@@ -390,6 +404,13 @@ def build_metadata(payload: dict, parsed_transcript: dict, transcript_path: Path
     title = session_index.get("thread_name") or first_user.splitlines()[0][:80] or session_id
     updated_at = session_index.get("updated_at") or parsed_transcript["messages"][-1]["timestamp"] if parsed_transcript["messages"] else parsed_transcript["session_meta"].get("timestamp", "")
 
+    localized_messages = []
+    for message in parsed_transcript["messages"]:
+        localized = dict(message)
+        localized["timestamp_local"] = format_local_timestamp(message.get("timestamp"))
+        localized_messages.append(localized)
+    parsed_transcript["messages"] = localized_messages
+
     project_dir = archive_root / "projects" / project_slug
     meta = {
         "session_id": session_id,
@@ -399,6 +420,7 @@ def build_metadata(payload: dict, parsed_transcript: dict, transcript_path: Path
         "project_slug": project_slug,
         "transcript_source": str(transcript_path),
         "updated_at": updated_at,
+        "updated_at_local": format_local_timestamp(updated_at),
     }
     return project_dir, meta
 
