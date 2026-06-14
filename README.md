@@ -108,6 +108,34 @@ python3 bin/backfill-history.py
 - No transcript data is stored inside the tool repo unless you do that
   deliberately yourself.
 
+## Related Tools
+
+This project is intentionally small and focused on automatic incremental
+archiving from the Codex hook system.
+
+If you want richer browsing or standalone export tools, these are worth a look:
+
+- `codex-export`
+  Markdown export for Codex sessions, including Codex Desktop/CLI style flows.
+- `codex-transcript-viewer`
+  Single-session HTML viewer with a richer browser UI.
+- `agent-trace`
+  Terminal UI for browsing and exporting local session histories.
+- `CodexMonitor`
+  Session inspection and monitoring tools, including VS Code extension session
+  support.
+- `codex-trace-viewer`
+  Local trace viewer focused on inspecting session internals.
+
+## Why This Exists
+
+Those tools are useful, but this repo solves a narrower operational problem:
+
+- export automatically at the end of a Codex interaction
+- work well with the Codex VS Code extension on WSL2
+- keep raw transcripts plus readable exports
+- keep the archive path private and outside the public repo
+
 ## Notes
 
 - The raw JSONL transcript is the canonical backup.
