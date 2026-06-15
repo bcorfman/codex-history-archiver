@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-history-archiver"
+version = "0.1.0"
+description = "Automatic local archiving for Codex conversations"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "Brandon Corfman" },
+]
+
+[project.scripts]
+codex-history-archiver = "codex_history_archiver.archiver:main"
+codex-history-install-hook = "codex_history_archiver.install_hook:main"
+codex-history-backfill = "codex_history_archiver.backfill:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

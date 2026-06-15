@@ -61,15 +61,19 @@ Supported HTML backend values:
 - `codex-transcript-viewer`
 - `codex-transcripts`
 
-Set with:
+Set the default backend at install time with:
 
 ```bash
-export CODEX_HISTORY_HTML_BACKEND=builtin
+uvx --from git+https://github.com/bcorfman/codex-history-archiver \
+  codex-history-install-hook \
+  --config ~/.codex/config.toml \
+  --archive-root /mnt/c/Users/your-user/codex-history-archive \
+  --html-backend builtin
 ```
 
-If you do not set `CODEX_HISTORY_HTML_BACKEND`, the builtin renderer is used.
-If a requested external backend is not installed on `PATH`, the tool falls
-back automatically to the builtin HTML export.
+If you do not pass `--html-backend`, the builtin renderer is used. If a
+requested external backend is not installed on `PATH`, the tool falls back
+automatically to the builtin HTML export.
 
 ### Command Override
 
@@ -91,9 +95,8 @@ named backend selection.
 
 ## Archive Layout
 
-The archive location is controlled by an environment variable:
-
-`CODEX_HISTORY_ARCHIVE_ROOT`
+The archive location is normally written directly into the managed Codex hook by
+the installer.
 
 Inside that root, archives are written like this:
 
@@ -106,113 +109,83 @@ projects/<project-slug>/
 
 ## Configure A Private Archive Directory
 
-Set a private archive location outside the repo, for example:
+Choose a private archive location outside the repo, for example:
 
-```bash
-export CODEX_HISTORY_ARCHIVE_ROOT=/mnt/c/Users/your-user/codex-history-archive
+```text
+/mnt/c/Users/your-user/codex-history-archive
 ```
 
-For persistence on WSL2 or Ubuntu, add that export to `.bash_profile` or
-another login-shell startup file that Codex will inherit.
+Pass that path to the installer with `--archive-root`. The managed hook then
+keeps using that path without depending on shell startup files or inherited
+environment variables.
 
-For native Windows, set `CODEX_HISTORY_ARCHIVE_ROOT` as a user environment
-variable.
+Optional overrides:
 
-### Windows Persistent User Env Var
+- `CODEX_HISTORY_ARCHIVE_ROOT`
+  If set, overrides the archive directory embedded in the hook command.
+- `CODEX_HISTORY_HTML_BACKEND`
+  If set, overrides the backend embedded in the hook command.
 
-PowerShell:
-
-```powershell
-[Environment]::SetEnvironmentVariable(
-  "CODEX_HISTORY_ARCHIVE_ROOT",
-  "C:\\Users\\your-user\\codex-history-archive",
-  "User"
-)
-[Environment]::SetEnvironmentVariable(
-  "CODEX_HISTORY_HTML_BACKEND",
-  "builtin",
-  "User"
-)
-```
-
-Then restart VS Code so the Codex extension inherits the updated environment.
-
-To verify in a new PowerShell session:
-
-```powershell
-$env:CODEX_HISTORY_ARCHIVE_ROOT
-```
-
-### WSL2 Persistent Env Var
-
-For WSL2 or Ubuntu, add the export to a login-shell startup file such as
-`.bash_profile`:
-
-```bash
-export CODEX_HISTORY_ARCHIVE_ROOT="/mnt/c/Users/your-user/codex-history-archive"
-export CODEX_HISTORY_HTML_BACKEND="builtin"
-```
-
-Then restart VS Code so the remote WSL extension host and Codex pick it up.
+Environment variables still work well for temporary overrides, but they are no
+longer the recommended primary configuration mechanism.
 
 ## Install
 
+Install the managed Codex hook directly from GitHub with `uvx`:
+
 ```bash
-python3 bin/install-hook.py --config ~/.codex/config.toml
+uvx --from git+https://github.com/bcorfman/codex-history-archiver \
+  codex-history-install-hook \
+  --config ~/.codex/config.toml \
+  --archive-root /mnt/c/Users/your-user/codex-history-archive \
+  --html-backend builtin
 ```
 
 This appends or updates a managed hook block in `~/.codex/config.toml`.
 
-- On WSL2/Linux, the generated hook uses `bash -lc` so login-shell environment
-  variables are available.
-- On Windows, run the installer from a Windows checkout so it can generate the
-  Windows-specific hook command.
+- On WSL2/Linux, the installed hook runs through `uvx` via `bash -lc`.
+- On Windows, the installed hook uses a Windows command entry in the same
+  managed block.
+- The archive root and backend are written directly into the hook command, so
+  the default install does not depend on login-shell environment propagation.
 
-### Non-WSL Windows Install Flow
+### WSL2 Example
 
-1. Clone the repo in Windows, for example:
-
-```powershell
-git clone https://github.com/bcorfman/codex-history-archiver.git `
-  C:\Users\your-user\dev\codex-history-archiver
-cd C:\Users\your-user\dev\codex-history-archiver
+```bash
+uvx --from git+https://github.com/bcorfman/codex-history-archiver \
+  codex-history-install-hook \
+  --config ~/.codex/config.toml \
+  --archive-root /mnt/c/Users/your-user/codex-history-archive \
+  --html-backend builtin
 ```
 
-2. Set the persistent user environment variable:
+Restart VS Code after installing so the Codex extension picks up the updated
+hook config.
+
+### Native Windows Example
 
 ```powershell
-[Environment]::SetEnvironmentVariable(
-  "CODEX_HISTORY_ARCHIVE_ROOT",
-  "C:\\Users\\your-user\\codex-history-archive",
-  "User"
-)
-[Environment]::SetEnvironmentVariable(
-  "CODEX_HISTORY_HTML_BACKEND",
-  "builtin",
-  "User"
-)
+uvx --from git+https://github.com/bcorfman/codex-history-archiver `
+  codex-history-install-hook `
+  --config $HOME\.codex\config.toml `
+  --archive-root C:\Users\your-user\codex-history-archive `
+  --html-backend builtin
 ```
 
-3. Install the hook into your Codex config:
+Restart VS Code after installing so the Codex extension picks up the updated
+hook config.
 
-```powershell
-py -3 .\bin\install-hook.py --config $HOME\.codex\config.toml
-```
+### Local Checkout Alternative
 
-4. Restart VS Code.
+If you are developing locally and want the hook to point at the checkout instead
+of `uvx`, run:
 
-5. Finish a Codex turn and verify files appear under:
-
-```powershell
-Get-ChildItem -Recurse $env:CODEX_HISTORY_ARCHIVE_ROOT
-```
-
-### Non-WSL Windows Backfill
-
-After installing, you can backfill existing sessions with:
-
-```powershell
-py -3 .\bin\backfill-history.py
+```bash
+python3 bin/install-hook.py \
+  --config ~/.codex/config.toml \
+  --archive-root /mnt/c/Users/your-user/codex-history-archive \
+  --html-backend builtin \
+  --launcher local
 ```
 
 ## Verify
@@ -220,7 +193,7 @@ py -3 .\bin\backfill-history.py
 After installation, finish a Codex turn in VS Code and check:
 
 ```bash
-find "$CODEX_HISTORY_ARCHIVE_ROOT" -maxdepth 4 -type f | sort
+find /mnt/c/Users/your-user/codex-history-archive -maxdepth 4 -type f | sort
 ```
 
 ## Backfill Existing Sessions
@@ -228,14 +201,16 @@ find "$CODEX_HISTORY_ARCHIVE_ROOT" -maxdepth 4 -type f | sort
 To archive the Codex transcripts you already have on disk:
 
 ```bash
-python3 bin/backfill-history.py
+uvx --from git+https://github.com/bcorfman/codex-history-archiver \
+  codex-history-backfill \
+  --archive-root /mnt/c/Users/your-user/codex-history-archive
 ```
 
 ## Privacy Model
 
 - The repo is safe to publish publicly.
-- Transcript exports are written only to the private directory named by
-  `CODEX_HISTORY_ARCHIVE_ROOT`.
+- Transcript exports are written only to the private archive directory you
+  choose at install time, unless you deliberately override it.
 - No transcript data is stored inside the tool repo unless you do that
   deliberately yourself.
 
@@ -278,22 +253,27 @@ activity collapsed into optional details.
 
 ## Troubleshooting
 
-### `CODEX_HISTORY_ARCHIVE_ROOT` is not visible to Codex
+### Archive files are not being written where you expect
 
 Symptoms:
 
 - no archive files are written
+- files are written to an old archive path
 - the hook returns a message saying the archive root is not set
 
 Checks:
 
-- On WSL2/Linux:
+- inspect the managed hook block in `~/.codex/config.toml`
+- confirm the `--archive-root` value is the path you meant to install
+- if you are using env var overrides, verify them explicitly
+
+On WSL2/Linux:
 
 ```bash
 bash -lc 'echo "$CODEX_HISTORY_ARCHIVE_ROOT"'
 ```
 
-- On Windows:
+On Windows:
 
 ```powershell
 $env:CODEX_HISTORY_ARCHIVE_ROOT
@@ -301,9 +281,10 @@ $env:CODEX_HISTORY_ARCHIVE_ROOT
 
 Fix:
 
-- make sure the variable is set persistently
-- restart VS Code completely after setting it
-- on WSL2, prefer a login-shell startup file such as `.bash_profile`
+- reinstall the hook with the archive path you actually want
+- restart VS Code completely after reinstalling
+- remove `CODEX_HISTORY_ARCHIVE_ROOT` if an old override is shadowing the hook
+  config
 
 ### Hook is installed but does not seem to fire
 
@@ -317,13 +298,21 @@ Checks:
 Reinstall:
 
 ```bash
-python3 bin/install-hook.py --config ~/.codex/config.toml
+uvx --from git+https://github.com/bcorfman/codex-history-archiver \
+  codex-history-install-hook \
+  --config ~/.codex/config.toml \
+  --archive-root /mnt/c/Users/your-user/codex-history-archive \
+  --html-backend builtin
 ```
 
 Windows:
 
 ```powershell
-py -3 .\bin\install-hook.py --config $HOME\.codex\config.toml
+uvx --from git+https://github.com/bcorfman/codex-history-archiver `
+  codex-history-install-hook `
+  --config $HOME\.codex\config.toml `
+  --archive-root C:\Users\your-user\codex-history-archive `
+  --html-backend builtin
 ```
 
 ### Archive files appear under the wrong project slug
