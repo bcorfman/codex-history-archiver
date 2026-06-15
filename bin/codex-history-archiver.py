@@ -404,8 +404,6 @@ def render_html(meta: dict, turns: list[dict]) -> str:
                 f"{render_chat_text(item['text'])}"
                 "</div>"
             )
-        if not commentary_blocks:
-            commentary_blocks.append("<div class='commentary-empty'>No progress updates captured.</div>")
 
         final_answer_block = ""
         if turn["final_answer"]:
@@ -617,6 +615,9 @@ def render_html(meta: dict, turns: list[dict]) -> str:
     .commentary-group {{
       display: grid;
       gap: 0.55rem;
+    }}
+    .commentary-group:empty {{
+      display: none;
     }}
     .commentary-item {{
       padding: 0;
