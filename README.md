@@ -39,23 +39,24 @@ This project uses that event to:
 
 HTML is the only archived artifact.
 
-HTML export defaults to `codex-transcript-viewer`, with optional PATH-based
-backend overrides if you want a different renderer.
+HTML export defaults to the builtin conversation renderer, with optional
+PATH-based backend overrides if you want a different renderer.
 
 Supported HTML backend values:
 
+- `builtin`
 - `codex-transcript-viewer`
 - `codex-transcripts`
-- `builtin`
 
 Set with:
 
 ```bash
-export CODEX_HISTORY_HTML_BACKEND=codex-transcript-viewer
+export CODEX_HISTORY_HTML_BACKEND=builtin
 ```
 
-If the requested external backend is not installed on `PATH`, the tool falls
-back automatically to the builtin HTML exporter.
+If you do not set `CODEX_HISTORY_HTML_BACKEND`, the builtin renderer is used.
+If a requested external backend is not installed on `PATH`, the tool falls
+back automatically to the builtin HTML export.
 
 ### Command Override
 
@@ -116,7 +117,7 @@ PowerShell:
 )
 [Environment]::SetEnvironmentVariable(
   "CODEX_HISTORY_HTML_BACKEND",
-  "codex-transcript-viewer",
+  "builtin",
   "User"
 )
 ```
@@ -136,8 +137,7 @@ For WSL2 or Ubuntu, add the export to a login-shell startup file such as
 
 ```bash
 export CODEX_HISTORY_ARCHIVE_ROOT="/mnt/c/Users/your-user/codex-history-archive"
-export CODEX_HISTORY_HTML_BACKEND="codex-transcript-viewer"
-export CODEX_HISTORY_HTML_BACKEND_CMD='uvx --from git+https://github.com/masonc15/codex-transcript-viewer codex-transcript-viewer {input} {output}'
+export CODEX_HISTORY_HTML_BACKEND="builtin"
 ```
 
 Then restart VS Code so the remote WSL extension host and Codex pick it up.
@@ -175,12 +175,7 @@ cd C:\Users\your-user\dev\codex-history-archiver
 )
 [Environment]::SetEnvironmentVariable(
   "CODEX_HISTORY_HTML_BACKEND",
-  "codex-transcript-viewer",
-  "User"
-)
-[Environment]::SetEnvironmentVariable(
-  "CODEX_HISTORY_HTML_BACKEND_CMD",
-  "uvx --from git+https://github.com/masonc15/codex-transcript-viewer codex-transcript-viewer {input} {output}",
+  "builtin",
   "User"
 )
 ```
@@ -261,9 +256,9 @@ Those tools are useful, but this repo solves a narrower operational problem:
 - keep an HTML archive that is easier to browse than the VS Code history list
 - keep the archive path private and outside the public repo
 
-`codex-transcript-viewer` is the recommended HTML backend because its
-browser-side filters are a better fit when you want conversation-centric output
-instead of the full tool trace by default.
+The builtin renderer is the recommended default because it groups each user
+prompt with the related Codex commentary and final answer, while keeping tool
+activity collapsed into optional details.
 
 ## Notes
 

@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--session-id", help="Override session id.")
     parser.add_argument(
         "--html-backend",
-        default=os.environ.get("CODEX_HISTORY_HTML_BACKEND", "codex-transcript-viewer"),
+        default=os.environ.get("CODEX_HISTORY_HTML_BACKEND", "builtin"),
         help="HTML backend: builtin, codex-transcripts, or codex-transcript-viewer.",
     )
     return parser.parse_args()
@@ -174,6 +174,8 @@ def summarize_entry(item: dict) -> tuple[str, str]:
 def parse_transcript(transcript_path: Path) -> dict:
     session_meta: dict = {}
     entries: list[dict] = []
+    turns: list[dict] = []
+    current_turn: dict | None = None
 
     for line in transcript_path.read_text().splitlines():
         if not line.strip():
@@ -192,9 +194,92 @@ def parse_transcript(transcript_path: Path) -> dict:
             }
         )
 
+        item_type = item.get("type")
+        payload = item.get("payload", {})
+        if item_type != "response_item":
+            if (
+                item_type == "event_msg"
+                and payload.get("type") == "task_complete"
+                and current_turn
+                and payload.get("last_agent_message")
+                and not current_turn["final_answer"]
+            ):
+                current_turn["final_answer"] = payload["last_agent_message"].strip()
+                current_turn["final_answer_timestamp"] = item.get("timestamp")
+            continue
+
+        payload_type = payload.get("type")
+        if payload_type == "message":
+            role = payload.get("role")
+            phase = payload.get("phase")
+            content = extract_text_parts(payload.get("content", []))
+            if role == "user" and is_real_user_prompt(content):
+                if current_turn:
+                    turns.append(current_turn)
+                current_turn = {
+                    "user_text": content,
+                    "user_timestamp": item.get("timestamp"),
+                    "commentary": [],
+                    "final_answer": "",
+                    "final_answer_timestamp": None,
+                    "tools": [],
+                }
+                continue
+            if role == "assistant" and current_turn and content:
+                if phase == "final_answer":
+                    if current_turn["final_answer"]:
+                        current_turn["final_answer"] += "\n\n" + content
+                    else:
+                        current_turn["final_answer"] = content
+                    current_turn["final_answer_timestamp"] = item.get("timestamp")
+                else:
+                    current_turn["commentary"].append(
+                        {
+                            "timestamp": item.get("timestamp"),
+                            "text": content,
+                        }
+                    )
+            continue
+
+        if not current_turn:
+            continue
+
+        if payload_type == "function_call":
+            tool = {
+                "call_id": payload.get("call_id"),
+                "name": payload.get("name", "tool"),
+                "arguments": payload.get("arguments", ""),
+                "output": "",
+                "timestamp": item.get("timestamp"),
+            }
+            current_turn["tools"].append(tool)
+            continue
+
+        if payload_type == "function_call_output":
+            call_id = payload.get("call_id")
+            output = payload.get("output", "")
+            for tool in reversed(current_turn["tools"]):
+                if tool.get("call_id") == call_id and not tool.get("output"):
+                    tool["output"] = output
+                    break
+            else:
+                current_turn["tools"].append(
+                    {
+                        "call_id": call_id,
+                        "name": "tool_output",
+                        "arguments": "",
+                        "output": output,
+                        "timestamp": item.get("timestamp"),
+                    }
+                )
+
+    if current_turn:
+        turns.append(current_turn)
+
     return {
         "session_meta": session_meta,
         "entries": entries,
+        "turns": turns,
     }
 
 
@@ -230,65 +315,403 @@ def render_markdown(meta: dict, entries: list[dict]) -> str:
     return "\n".join(header + body).strip() + "\n"
 
 
-def render_html(meta: dict, entries: list[dict]) -> str:
+def tool_summary(tool: dict) -> str:
+    name = tool.get("name", "tool")
+    arguments = tool.get("arguments", "")
+    if name == "exec_command":
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            return arguments.strip().splitlines()[0][:120] or name
+        return parsed.get("cmd", name)
+    if name == "apply_patch":
+        return "apply_patch"
+    if name == "search_query":
+        return "search"
+    if name == "open":
+        return "open"
+    if arguments:
+        return arguments.strip().splitlines()[0][:120]
+    return name
+
+
+def render_chat_text(text: str) -> str:
+    placeholders: list[str] = []
+
+    def render_inline(value: str) -> str:
+        parts: list[str] = []
+        last = 0
+        for match in re.finditer(r"`([^`]+)`", value):
+            parts.append(html.escape(value[last : match.start()]))
+            parts.append(f"<code>{html.escape(match.group(1))}</code>")
+            last = match.end()
+        parts.append(html.escape(value[last:]))
+        return "".join(parts)
+
+    def store(fragment: str) -> str:
+        placeholders.append(fragment)
+        return f"@@PLACEHOLDER{len(placeholders) - 1}@@"
+
+    text = re.sub(
+        r"\[([^\]]+)\]\(([^)]+)\)",
+        lambda m: store(
+            f'<a href="{html.escape(m.group(2), quote=True)}">{render_inline(m.group(1))}</a>'
+        ),
+        text,
+    )
+
+    blocks = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        lines = block.splitlines()
+        if lines and all(re.match(r"\d+\.\s+", line) for line in lines):
+            items = []
+            for line in lines:
+                match = re.match(r"\d+\.\s+(.*)", line)
+                items.append(f"<li>{render_inline(match.group(1) if match else line)}</li>")
+            blocks.append(f"<ol>{''.join(items)}</ol>")
+            continue
+        if lines and all(line.startswith("- ") for line in lines):
+            items = "".join(f"<li>{render_inline(line[2:])}</li>" for line in lines)
+            blocks.append(f"<ul>{items}</ul>")
+            continue
+        blocks.append("<p>" + "<br>".join(render_inline(line) for line in lines) + "</p>")
+
+    rendered = "".join(blocks)
+    for idx, fragment in enumerate(placeholders):
+        rendered = rendered.replace(f"@@PLACEHOLDER{idx}@@", fragment)
+    return rendered
+
+
+def render_html(meta: dict, turns: list[dict]) -> str:
     title = html.escape(meta["title"])
-    rows = []
-    for entry in entries:
-        rows.append(
-            "<section class='message'>"
-            f"<h2>{html.escape(entry['heading'])}</h2>"
-            f"<p class='timestamp'>{html.escape(str(entry['timestamp_local']))}</p>"
-            f"<pre>{html.escape(entry['text'] or '_No summarized text_')}</pre>"
-            "<details><summary>Raw entry</summary>"
-            f"<pre>{html.escape(entry['raw'])}</pre>"
-            "</details>"
-            "</section>"
+    sidebar_rows = []
+    turn_rows = []
+    for idx, turn in enumerate(turns, start=1):
+        turn_id = f"turn-{idx}"
+        prompt = turn["user_text"].strip()
+        prompt_preview = prompt.splitlines()[0][:88]
+        sidebar_rows.append(
+            "<a class='sidebar-link' href='#{turn_id}'>"
+            f"<span class='sidebar-index'>{idx:02d}</span>"
+            f"<span class='sidebar-text'>{html.escape(prompt_preview)}</span>"
+            "</a>".replace("{turn_id}", turn_id)
         )
+
+        commentary_blocks = []
+        for item in turn["commentary"]:
+            commentary_blocks.append(
+                "<div class='commentary-item'>"
+                f"<div class='commentary-time'>{html.escape(item['timestamp_local'])}</div>"
+                f"{render_chat_text(item['text'])}"
+                "</div>"
+            )
+        if not commentary_blocks:
+            commentary_blocks.append("<div class='commentary-empty'>No progress updates captured.</div>")
+
+        final_answer_block = ""
+        if turn["final_answer"]:
+            final_answer_block = (
+                "<div class='answer-block'>"
+                f"<div class='answer-time'>{html.escape(str(turn.get('final_answer_timestamp_local') or ''))}</div>"
+                f"<div class='answer-text'>{render_chat_text(turn['final_answer'])}</div>"
+                "</div>"
+            )
+
+        tools_block = ""
+        if turn["tools"]:
+            tool_items = []
+            for tool in turn["tools"]:
+                output = (tool.get("output") or "").strip()
+                output_html = ""
+                if output:
+                    output_html = (
+                        "<pre class='tool-output'>"
+                        f"{html.escape(output[:4000])}"
+                        "</pre>"
+                    )
+                tool_items.append(
+                    "<div class='tool-item'>"
+                    f"<div class='tool-title'>{html.escape(tool.get('name', 'tool'))}</div>"
+                    f"<div class='tool-summary'>{html.escape(tool_summary(tool))}</div>"
+                    f"{output_html}"
+                    "</div>"
+                )
+            tools_block = (
+                "<details class='tool-details'>"
+                f"<summary>Tool activity ({len(turn['tools'])})</summary>"
+                f"{''.join(tool_items)}"
+                "</details>"
+            )
+
+        turn_rows.append(
+            f"""<section class="turn" id="{turn_id}">
+  <div class="question-block">
+    <div class="question-label">You</div>
+    <div class="question-time">{html.escape(turn['user_timestamp_local'])}</div>
+    <div class="question-text">{render_chat_text(prompt)}</div>
+  </div>
+  <div class="assistant-block">
+    <div class="assistant-label">Codex</div>
+    <div class="assistant-group">
+      <div class="commentary-group">
+        {''.join(commentary_blocks)}
+      </div>
+      {final_answer_block}
+      {tools_block}
+    </div>
+  </div>
+</section>"""
+        )
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>{title}</title>
   <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #111318;
+      --panel: #161922;
+      --panel-2: #1a1f2b;
+      --panel-3: #12161f;
+      --border: #2b3345;
+      --text: #edf2f8;
+      --muted: #9eabc1;
+      --accent: #7fb0ff;
+      --accent-2: #67d4c5;
+      --answer: #9ad36a;
+    }}
+    * {{ box-sizing: border-box; }}
     body {{
-      font-family: Georgia, serif;
-      margin: 2rem auto;
-      max-width: 900px;
-      line-height: 1.5;
-      padding: 0 1rem 4rem;
-      background: #f7f4ed;
-      color: #1d1b19;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif;
+      font-size: 19px;
+      line-height: 1.65;
     }}
-    h1, h2 {{ line-height: 1.2; }}
-    .meta {{ margin-bottom: 2rem; }}
-    .message {{
-      background: #fffdfa;
-      border: 1px solid #d8cfc1;
-      padding: 1rem 1.25rem;
-      margin: 1rem 0;
+    a {{ color: inherit; text-decoration: none; }}
+    .layout {{
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      min-height: 100vh;
     }}
-    .timestamp {{
-      color: #6b6257;
+    .sidebar {{
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      padding: 1.5rem 1rem 2rem;
+      background: #0d1016;
+      border-right: 1px solid var(--border);
+    }}
+    .sidebar h1 {{
+      margin: 0 0 0.35rem;
+      font-size: 1.2rem;
+      line-height: 1.2;
+    }}
+    .sidebar-meta {{
+      margin: 0 0 1.25rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }}
+    .sidebar-link {{
+      display: grid;
+      grid-template-columns: 2.4rem 1fr;
+      gap: 0.75rem;
+      align-items: start;
+      padding: 0.8rem 0.85rem;
+      margin-bottom: 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: #141925;
+    }}
+    .sidebar-index {{
+      color: var(--muted);
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding-top: 0.15rem;
+    }}
+    .sidebar-text {{
+      font-size: 0.96rem;
+      line-height: 1.4;
+    }}
+    .content {{
+      padding: 2rem 2.25rem 4rem;
+      max-width: 980px;
+    }}
+    .page-title {{
+      margin: 0 0 0.35rem;
+      font-size: 2rem;
+      line-height: 1.15;
+    }}
+    .page-subtitle {{
+      margin: 0 0 2rem;
+      color: var(--muted);
+      font-size: 1rem;
+    }}
+    .turn {{
+      margin-bottom: 2rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }}
+    .question-block, .assistant-group {{
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 1.15rem 1.25rem;
+    }}
+    .question-block {{
+      background: linear-gradient(180deg, #161d27 0%, #141921 100%);
+      border-left: 4px solid var(--accent-2);
+      margin-bottom: 0.9rem;
+    }}
+    .assistant-block {{
+      margin-left: 1.5rem;
+    }}
+    .assistant-group {{
+      background: linear-gradient(180deg, #171c27 0%, #131823 100%);
+      border-left: 4px solid var(--accent);
+    }}
+    .question-label, .assistant-label {{
+      font-size: 0.83rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }}
+    .question-time, .commentary-time, .answer-time {{
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-bottom: 0.45rem;
+    }}
+    .question-text, .answer-text {{
+      font-size: 1.08rem;
+    }}
+    .question-text p, .answer-text p, .commentary-item p {{
+      margin: 0 0 0.8rem;
+    }}
+    .question-text p:last-child, .answer-text p:last-child, .commentary-item p:last-child {{
+      margin-bottom: 0;
+    }}
+    .question-text ol, .answer-text ol, .question-text ul, .answer-text ul {{
+      margin: 0.4rem 0 0.8rem 1.4rem;
+    }}
+    .question-text code, .answer-text code, .commentary-item code {{
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+      background: rgba(255,255,255,0.08);
+      padding: 0.1rem 0.35rem;
+      border-radius: 8px;
+    }}
+    .question-text a, .answer-text a, .commentary-item a {{
+      color: #9bc2ff;
+      text-decoration: none;
+    }}
+    .commentary-group {{
+      display: grid;
+      gap: 0.8rem;
+    }}
+    .commentary-item {{
+      padding: 0.95rem 1rem;
+      border-radius: 14px;
+      background: #111722;
+      border: 1px solid rgba(255,255,255,0.05);
+    }}
+    .commentary-item p {{
+      margin: 0;
+      white-space: pre-wrap;
+    }}
+    .answer-block {{
+      margin-top: 1rem;
+      padding: 1rem 1.05rem;
+      border-radius: 14px;
+      background: #152217;
+      border: 1px solid rgba(154,211,106,0.28);
+    }}
+    .answer-time {{
+      color: #b6d98f;
+    }}
+    .tool-details {{
+      margin-top: 1rem;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 14px;
+      background: #0f141d;
+      overflow: hidden;
+    }}
+    .tool-details summary {{
+      cursor: pointer;
+      padding: 0.9rem 1rem;
+      color: var(--muted);
+    }}
+    .tool-item {{
+      padding: 0.95rem 1rem 1rem;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }}
+    .tool-title {{
       font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #bfd0ea;
+      margin-bottom: 0.3rem;
     }}
-    pre {{
+    .tool-summary {{
+      color: #d9e2f0;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.95rem;
+      margin-bottom: 0.6rem;
       white-space: pre-wrap;
       word-break: break-word;
+    }}
+    .tool-output {{
       margin: 0;
-      font-family: "Iosevka Fixed", "SFMono-Regular", Consolas, monospace;
+      padding: 0.9rem;
+      border-radius: 12px;
+      background: #0b1017;
+      color: #a9b8cc;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.9rem;
+      max-height: 18rem;
+      overflow: auto;
+    }}
+    @media (max-width: 960px) {{
+      .layout {{
+        grid-template-columns: 1fr;
+      }}
+      .sidebar {{
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }}
+      .content {{
+        padding: 1.25rem 1rem 3rem;
+      }}
+      .assistant-block {{
+        margin-left: 0;
+      }}
+      body {{
+        font-size: 20px;
+      }}
     }}
   </style>
 </head>
 <body>
-  <h1>{title}</h1>
-  <div class="meta">
-    <p><strong>Session ID:</strong> <code>{html.escape(meta["session_id"])}</code></p>
-    <p><strong>Project:</strong> <code>{html.escape(meta["project_slug"])}</code></p>
-    <p><strong>CWD:</strong> <code>{html.escape(meta["cwd"])}</code></p>
-    <p><strong>Transcript:</strong> <code>{html.escape(meta["transcript_source"])}</code></p>
-    <p><strong>Updated:</strong> <code>{html.escape(meta["updated_at_local"])}</code></p>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>{title}</h1>
+      <div class="sidebar-meta">{html.escape(meta["project_slug"])} · {len(turns)} turn(s)</div>
+      {''.join(sidebar_rows)}
+    </aside>
+    <main class="content">
+      <h1 class="page-title">{title}</h1>
+      <p class="page-subtitle">Archived conversation view grouped by prompt and response.</p>
+      {''.join(turn_rows)}
+    </main>
   </div>
-  {''.join(rows)}
 </body>
 </html>
 """
@@ -507,7 +930,7 @@ pre {{
 
 
 def render_html_with_backend(
-    backend: str, transcript_path: Path, html_path: Path, meta: dict, entries: list[dict]
+    backend: str, transcript_path: Path, html_path: Path, meta: dict, turns: list[dict]
 ) -> str:
     backend_cmd = os.environ.get("CODEX_HISTORY_HTML_BACKEND_CMD")
     if backend_cmd:
@@ -577,7 +1000,7 @@ def render_html_with_backend(
 
     html_path.write_text(
         inject_archive_viewer_overrides(
-            inject_archive_metadata(render_html(meta, entries), meta)
+            inject_archive_metadata(render_html(meta, turns), meta)
         )
     )
     return "builtin"
@@ -586,7 +1009,7 @@ def render_html_with_backend(
 def write_session_exports(
     project_dir: Path,
     session_meta: dict,
-    entries: list[dict],
+    turns: list[dict],
     transcript_path: Path,
     html_backend: str,
 ) -> dict:
@@ -598,7 +1021,7 @@ def write_session_exports(
     session_meta = dict(session_meta)
     session_meta["html_backend_requested"] = html_backend
     session_meta["html_backend_used"] = render_html_with_backend(
-        html_backend, transcript_path, html_path, session_meta, entries
+        html_backend, transcript_path, html_path, session_meta, turns
     )
     for legacy_path in (
         sessions_dir / f"{session_id}.jsonl",
@@ -751,6 +1174,24 @@ def build_metadata(payload: dict, parsed_transcript: dict, transcript_path: Path
         localized_entries.append(localized)
     parsed_transcript["entries"] = localized_entries
 
+    localized_turns = []
+    for turn in parsed_transcript["turns"]:
+        localized_turn = dict(turn)
+        localized_turn["user_timestamp_local"] = format_local_timestamp(turn.get("user_timestamp"))
+        localized_turn["final_answer_timestamp_local"] = format_local_timestamp(
+            turn.get("final_answer_timestamp")
+        )
+        localized_turn["commentary"] = [
+            {
+                **item,
+                "timestamp_local": format_local_timestamp(item.get("timestamp")),
+            }
+            for item in turn.get("commentary", [])
+        ]
+        localized_turn["tools"] = list(turn.get("tools", []))
+        localized_turns.append(localized_turn)
+    parsed_transcript["turns"] = localized_turns
+
     project_dir = archive_root / "projects" / project_slug
     meta = {
         "session_id": session_id,
@@ -792,7 +1233,7 @@ def main() -> int:
 
     parsed = parse_transcript(transcript_path)
     project_dir, meta = build_metadata(payload, parsed, transcript_path, archive_root)
-    write_session_exports(project_dir, meta, parsed["entries"], transcript_path, args.html_backend)
+    write_session_exports(project_dir, meta, parsed["turns"], transcript_path, args.html_backend)
     removed_duplicates = prune_duplicate_session_archives(archive_root, meta["session_id"])
     rebuild_project_index(project_dir)
     for removed in removed_duplicates:
