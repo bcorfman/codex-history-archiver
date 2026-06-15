@@ -1,7 +1,20 @@
 # Codex History Archiver
 
-Incremental local archiving for Codex conversations using the official `Stop`
-hook.
+A safe, private, searchable local archive for every Codex conversation.
+
+Codex History Archiver automatically exports each Codex conversation at the end
+of every turn, creating durable per-project HTML history outside the built-in
+VS Code sidebar.
+
+Built for the real workflow:
+
+- automatic export after every Codex interaction
+- strong WSL2 + VS Code + Codex support
+- clean HTML session pages plus a per-project index
+- archive storage that stays outside your public repo
+
+It uses the official Codex `Stop` hook, so the archive stays up to date with
+minimal setup and minimal risk of losing useful conversation history.
 
 Primary target:
 
@@ -22,7 +35,7 @@ The archiver keeps:
 - a per-project HTML index
 
 It is designed for people who want project chat history preserved outside the
-VS Code sidebar, with minimal risk of losing searchable conversation memory.
+VS Code sidebar, with a durable archive they control.
 
 ## How It Works
 
@@ -249,12 +262,8 @@ If you want richer browsing or standalone export tools, these are worth a look:
 
 ## Why This Exists
 
-Those tools are useful, but this repo solves a narrower operational problem:
-
-- export automatically at the end of a Codex interaction
-- work well with the Codex VS Code extension on WSL2
-- keep an HTML archive that is easier to browse than the VS Code history list
-- keep the archive path private and outside the public repo
+This repo stays intentionally narrow: reliable automatic archiving for Codex in
+the workflow many people actually use, especially VS Code on WSL2.
 
 The builtin renderer is the recommended default because it groups each user
 prompt with the related Codex commentary and final answer, while keeping tool
