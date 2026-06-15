@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 
 ARCHIVE_META_TAG = "codex-history-archive-meta"
+ARCHIVE_OVERRIDE_STYLE_TAG = "codex-history-archive-style"
+ARCHIVE_OVERRIDE_SCRIPT_TAG = "codex-history-archive-script"
 
 
 def parse_args() -> argparse.Namespace:
@@ -309,6 +311,201 @@ def inject_archive_metadata(html_text: str, meta: dict) -> str:
     return tag + "\n" + html_text
 
 
+def inject_archive_viewer_overrides(html_text: str) -> str:
+    style_tag = f"""<style id="{ARCHIVE_OVERRIDE_STYLE_TAG}">
+:root {{
+  color-scheme: dark;
+}}
+
+body {{
+  background: #0f1117 !important;
+  color: #e6eaf2 !important;
+  font-family: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI", sans-serif !important;
+}}
+
+#sidebar {{
+  background: #0b0e14 !important;
+  border-right: 1px solid #202637 !important;
+}}
+
+#content {{
+  background: #0f1117 !important;
+}}
+
+.header {{
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 1rem 0 1.25rem !important;
+}}
+
+.header h1 {{
+  font-size: 1.65rem !important;
+  letter-spacing: 0.01em !important;
+}}
+
+.header-info,
+.footer {{
+  display: none !important;
+}}
+
+.sidebar-header h2 {{
+  letter-spacing: 0.08em !important;
+}}
+
+.filter-btn {{
+  border-radius: 999px !important;
+}}
+
+.filter-btn.active {{
+  background: #7dd3c7 !important;
+  border-color: #7dd3c7 !important;
+  color: #081015 !important;
+}}
+
+.tree-node {{
+  border-radius: 10px !important;
+}}
+
+.user-message,
+.assistant-message,
+.commentary-message,
+.tool-execution,
+.system-event,
+.token-count,
+.thinking-block {{
+  border-radius: 14px !important;
+  border: 1px solid #273044 !important;
+  box-shadow: none !important;
+  margin: 1rem 0 !important;
+  padding: 1rem 1.1rem !important;
+}}
+
+.user-message {{
+  background: #131a22 !important;
+  border-left: 4px solid #7dd3c7 !important;
+}}
+
+.assistant-message {{
+  background: #121825 !important;
+  border-left: 4px solid #8fb4ff !important;
+}}
+
+.commentary-message {{
+  background: #151726 !important;
+  border-left: 4px solid #f6c177 !important;
+  color: #eef2ff !important;
+}}
+
+.final-answer {{
+  background: #142116 !important;
+  border-left: 4px solid #8bd450 !important;
+}}
+
+.tool-execution {{
+  background: #11151d !important;
+  border-left: 4px solid #5f6b85 !important;
+}}
+
+.system-event,
+.token-count,
+.thinking-block {{
+  background: #10141b !important;
+  border-left: 4px solid #394150 !important;
+  color: #9aa5b1 !important;
+}}
+
+.message-timestamp {{
+  color: #93a0b8 !important;
+}}
+
+.tool-header,
+.tool-name,
+.event-label {{
+  color: #d9dfeb !important;
+}}
+
+.tool-command,
+pre,
+code {{
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace !important;
+}}
+
+pre {{
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+}}
+</style>"""
+    script_tag = f"""<script id="{ARCHIVE_OVERRIDE_SCRIPT_TAG}">
+(function() {{
+  if (window.__codexHistoryArchiveOverridesApplied) return;
+  window.__codexHistoryArchiveOverridesApplied = true;
+
+  function visibleMessageIds() {{
+    return new Set(
+      Array.from(document.querySelectorAll('.tree-node'))
+        .filter((node) => node.style.display !== 'none')
+        .map((node) => (node.getAttribute('href') || '').replace(/^#/, ''))
+        .filter(Boolean)
+    );
+  }}
+
+  function syncMainPane() {{
+    var ids = visibleMessageIds();
+    document.querySelectorAll('#messages > [id]').forEach(function(el) {{
+      el.style.display = ids.has(el.id) ? '' : 'none';
+    }});
+  }}
+
+  function wrapFiltering() {{
+    if (typeof window.applyFilters === 'function' && !window.__codexHistoryApplyFiltersWrapped) {{
+      var originalApplyFilters = window.applyFilters;
+      window.applyFilters = function(search) {{
+        var result = originalApplyFilters.call(this, search);
+        syncMainPane();
+        return result;
+      }};
+      window.__codexHistoryApplyFiltersWrapped = true;
+    }}
+  }}
+
+  function boot() {{
+    wrapFiltering();
+
+    var treeContainer = document.getElementById('tree-container');
+    if (treeContainer) {{
+      var observer = new MutationObserver(function() {{
+        syncMainPane();
+      }});
+      observer.observe(treeContainer, {{
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'class']
+      }});
+    }}
+
+    var noToolsButton = document.querySelector('.filter-btn[data-filter="no-tools"]');
+    if (noToolsButton && typeof window.setFilter === 'function') {{
+      window.setFilter('no-tools', noToolsButton);
+    }} else {{
+      syncMainPane();
+    }}
+  }}
+
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', boot, {{ once: true }});
+  }} else {{
+    boot();
+  }}
+}})();
+</script>"""
+    if f'id="{ARCHIVE_OVERRIDE_STYLE_TAG}"' not in html_text and "</head>" in html_text:
+        html_text = html_text.replace("</head>", f"  {style_tag}\n</head>", 1)
+    if f'id="{ARCHIVE_OVERRIDE_SCRIPT_TAG}"' not in html_text and "</body>" in html_text:
+        html_text = html_text.replace("</body>", f"  {script_tag}\n</body>", 1)
+    return html_text
+
+
 def render_html_with_backend(
     backend: str, transcript_path: Path, html_path: Path, meta: dict, entries: list[dict]
 ) -> str:
@@ -324,10 +521,18 @@ def render_html_with_backend(
             generated = Path(tmpdir) / "index.html"
             if result.returncode == 0:
                 if generated.exists():
-                    html_path.write_text(inject_archive_metadata(generated.read_text(), meta))
+                    html_path.write_text(
+                        inject_archive_viewer_overrides(
+                            inject_archive_metadata(generated.read_text(), meta)
+                        )
+                    )
                     return "command-override"
                 if html_path.exists():
-                    html_path.write_text(inject_archive_metadata(html_path.read_text(), meta))
+                    html_path.write_text(
+                        inject_archive_viewer_overrides(
+                            inject_archive_metadata(html_path.read_text(), meta)
+                        )
+                    )
                     return "command-override"
 
     if backend == "codex-transcripts":
@@ -347,7 +552,11 @@ def render_html_with_backend(
                 )
                 generated = Path(tmpdir) / "index.html"
                 if result.returncode == 0 and generated.exists():
-                    html_path.write_text(inject_archive_metadata(generated.read_text(), meta))
+                    html_path.write_text(
+                        inject_archive_viewer_overrides(
+                            inject_archive_metadata(generated.read_text(), meta)
+                        )
+                    )
                     return "codex-transcripts"
 
     if backend == "codex-transcript-viewer":
@@ -359,10 +568,18 @@ def render_html_with_backend(
                 text=True,
             )
             if result.returncode == 0 and html_path.exists():
-                html_path.write_text(inject_archive_metadata(html_path.read_text(), meta))
+                html_path.write_text(
+                    inject_archive_viewer_overrides(
+                        inject_archive_metadata(html_path.read_text(), meta)
+                    )
+                )
                 return "codex-transcript-viewer"
 
-    html_path.write_text(inject_archive_metadata(render_html(meta, entries), meta))
+    html_path.write_text(
+        inject_archive_viewer_overrides(
+            inject_archive_metadata(render_html(meta, entries), meta)
+        )
+    )
     return "builtin"
 
 
