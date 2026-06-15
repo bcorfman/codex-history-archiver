@@ -401,7 +401,6 @@ def render_html(meta: dict, turns: list[dict]) -> str:
         for item in turn["commentary"]:
             commentary_blocks.append(
                 "<div class='commentary-item'>"
-                f"<div class='commentary-time'>{html.escape(item['timestamp_local'])}</div>"
                 f"{render_chat_text(item['text'])}"
                 "</div>"
             )
@@ -412,7 +411,6 @@ def render_html(meta: dict, turns: list[dict]) -> str:
         if turn["final_answer"]:
             final_answer_block = (
                 "<div class='answer-block'>"
-                f"<div class='answer-time'>{html.escape(str(turn.get('final_answer_timestamp_local') or ''))}</div>"
                 f"<div class='answer-text'>{render_chat_text(turn['final_answer'])}</div>"
                 "</div>"
             )
@@ -563,16 +561,23 @@ def render_html(meta: dict, turns: list[dict]) -> str:
       padding: 1.15rem 1.25rem;
     }}
     .question-block {{
-      background: linear-gradient(180deg, #161d27 0%, #141921 100%);
-      border-left: 4px solid var(--accent-2);
+      background: linear-gradient(180deg, #24272d 0%, #1f2228 100%);
+      border: 1px solid rgba(255,255,255,0.04);
+      border-left: 0;
       margin-bottom: 0.9rem;
+      margin-left: auto;
+      max-width: min(72%, 720px);
+      border-radius: 24px;
+      padding: 1rem 1.2rem;
     }}
     .assistant-block {{
-      margin-left: 1.5rem;
+      margin-right: 2.5rem;
+      max-width: 860px;
     }}
     .assistant-group {{
-      background: linear-gradient(180deg, #171c27 0%, #131823 100%);
-      border-left: 4px solid var(--accent);
+      background: transparent;
+      border: 0;
+      padding: 0;
     }}
     .question-label, .assistant-label {{
       font-size: 0.83rem;
@@ -581,13 +586,13 @@ def render_html(meta: dict, turns: list[dict]) -> str:
       color: var(--muted);
       margin-bottom: 0.25rem;
     }}
-    .question-time, .commentary-time, .answer-time {{
+    .question-time {{
       color: var(--muted);
       font-size: 0.92rem;
       margin-bottom: 0.45rem;
     }}
-    .question-text, .answer-text {{
-      font-size: 1.08rem;
+    .question-text, .answer-text, .commentary-item {{
+      font-size: 1rem;
     }}
     .question-text p, .answer-text p, .commentary-item p {{
       margin: 0 0 0.8rem;
@@ -611,13 +616,14 @@ def render_html(meta: dict, turns: list[dict]) -> str:
     }}
     .commentary-group {{
       display: grid;
-      gap: 0.8rem;
+      gap: 0.55rem;
     }}
     .commentary-item {{
-      padding: 0.95rem 1rem;
-      border-radius: 14px;
-      background: #111722;
-      border: 1px solid rgba(255,255,255,0.05);
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      border: 0;
+      color: var(--text);
     }}
     .commentary-item p {{
       margin: 0;
@@ -626,12 +632,9 @@ def render_html(meta: dict, turns: list[dict]) -> str:
     .answer-block {{
       margin-top: 1rem;
       padding: 1rem 1.05rem;
-      border-radius: 14px;
-      background: #152217;
-      border: 1px solid rgba(154,211,106,0.28);
-    }}
-    .answer-time {{
-      color: #b6d98f;
+      border-radius: 16px;
+      background: #151a23;
+      border: 1px solid rgba(255,255,255,0.06);
     }}
     .tool-details {{
       margin-top: 1rem;
@@ -691,10 +694,14 @@ def render_html(meta: dict, turns: list[dict]) -> str:
         padding: 1.25rem 1rem 3rem;
       }}
       .assistant-block {{
-        margin-left: 0;
+        margin-right: 0;
+        max-width: 100%;
       }}
       body {{
         font-size: 20px;
+      }}
+      .question-block {{
+        max-width: 100%;
       }}
     }}
   </style>
