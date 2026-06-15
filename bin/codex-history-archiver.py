@@ -14,6 +14,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+ARCHIVE_META_TAG = "codex-history-archive-meta"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -31,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--session-id", help="Override session id.")
     parser.add_argument(
         "--html-backend",
-        default=os.environ.get("CODEX_HISTORY_HTML_BACKEND", "builtin"),
+        default=os.environ.get("CODEX_HISTORY_HTML_BACKEND", "codex-transcript-viewer"),
         help="HTML backend: builtin, codex-transcripts, or codex-transcript-viewer.",
     )
     return parser.parse_args()
@@ -279,6 +281,23 @@ def render_html(meta: dict, entries: list[dict]) -> str:
 """
 
 
+def inject_archive_metadata(html_text: str, meta: dict) -> str:
+    payload = html.escape(json.dumps(meta, ensure_ascii=False))
+    tag = f'<script id="{ARCHIVE_META_TAG}" type="application/json">{payload}</script>'
+    if f'id="{ARCHIVE_META_TAG}"' in html_text:
+        html_text = re.sub(
+            rf'<script id="{ARCHIVE_META_TAG}" type="application/json">.*?</script>',
+            tag,
+            html_text,
+            count=1,
+            flags=re.DOTALL,
+        )
+        return html_text
+    if "</head>" in html_text:
+        return html_text.replace("</head>", f"  {tag}\n</head>", 1)
+    return tag + "\n" + html_text
+
+
 def render_html_with_backend(
     backend: str, transcript_path: Path, html_path: Path, meta: dict, entries: list[dict]
 ) -> str:
@@ -294,9 +313,10 @@ def render_html_with_backend(
             generated = Path(tmpdir) / "index.html"
             if result.returncode == 0:
                 if generated.exists():
-                    html_path.write_text(generated.read_text())
+                    html_path.write_text(inject_archive_metadata(generated.read_text(), meta))
                     return "command-override"
                 if html_path.exists():
+                    html_path.write_text(inject_archive_metadata(html_path.read_text(), meta))
                     return "command-override"
 
     if backend == "codex-transcripts":
@@ -316,7 +336,7 @@ def render_html_with_backend(
                 )
                 generated = Path(tmpdir) / "index.html"
                 if result.returncode == 0 and generated.exists():
-                    html_path.write_text(generated.read_text())
+                    html_path.write_text(inject_archive_metadata(generated.read_text(), meta))
                     return "codex-transcripts"
 
     if backend == "codex-transcript-viewer":
@@ -328,9 +348,10 @@ def render_html_with_backend(
                 text=True,
             )
             if result.returncode == 0 and html_path.exists():
+                html_path.write_text(inject_archive_metadata(html_path.read_text(), meta))
                 return "codex-transcript-viewer"
 
-    html_path.write_text(render_html(meta, entries))
+    html_path.write_text(inject_archive_metadata(render_html(meta, entries), meta))
     return "builtin"
 
 
@@ -345,69 +366,66 @@ def write_session_exports(
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
     session_id = session_meta["session_id"]
-    raw_path = sessions_dir / f"{session_id}.jsonl"
-    md_path = sessions_dir / f"{session_id}.md"
     html_path = sessions_dir / f"{session_id}.html"
-    meta_path = sessions_dir / f"{session_id}.meta.json"
-
-    shutil.copyfile(transcript_path, raw_path)
-    md_path.write_text(render_markdown(session_meta, entries))
     session_meta = dict(session_meta)
     session_meta["html_backend_requested"] = html_backend
     session_meta["html_backend_used"] = render_html_with_backend(
         html_backend, transcript_path, html_path, session_meta, entries
     )
-    meta_path.write_text(json.dumps(session_meta, indent=2) + "\n")
+    for legacy_path in (
+        sessions_dir / f"{session_id}.jsonl",
+        sessions_dir / f"{session_id}.md",
+        sessions_dir / f"{session_id}.meta.json",
+    ):
+        if legacy_path.exists():
+            legacy_path.unlink()
 
     return {
-        "raw_path": raw_path,
-        "md_path": md_path,
         "html_path": html_path,
-        "meta_path": meta_path,
     }
+
+
+def load_embedded_meta(html_path: Path) -> dict | None:
+    text = html_path.read_text(errors="ignore")
+    match = re.search(
+        rf'<script id="{ARCHIVE_META_TAG}" type="application/json">(.*?)</script>',
+        text,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+    try:
+        return json.loads(html.unescape(match.group(1)))
+    except json.JSONDecodeError:
+        return None
 
 
 def rebuild_project_index(project_dir: Path) -> None:
     sessions_dir = project_dir / "sessions"
-    meta_files = sorted(sessions_dir.glob("*.meta.json"))
+    html_files = sorted(sessions_dir.glob("*.html"))
     entries = []
-    for meta_file in meta_files:
-        meta = json.loads(meta_file.read_text())
-        entries.append(meta)
+    for html_file in html_files:
+        meta = load_embedded_meta(html_file)
+        if meta:
+            entries.append(meta)
     entries.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
 
-    md_lines = [
-        f"# Codex History Index: {project_dir.name}",
-        "",
-    ]
     html_rows = []
     for item in entries:
         session_id = item["session_id"]
         title = item["title"]
         updated_at = item["updated_at"]
-        md_lines.extend(
-            [
-                f"## {title}",
-                "",
-                f"- Updated: `{item.get('updated_at_local', updated_at)}`",
-                f"- Session ID: `{session_id}`",
-                f"- [Markdown](sessions/{session_id}.md)",
-                f"- [HTML](sessions/{session_id}.html)",
-                f"- [Raw JSONL](sessions/{session_id}.jsonl)",
-                "",
-            ]
-        )
         html_rows.append(
             "<tr>"
             f"<td>{html.escape(title)}</td>"
             f"<td><code>{html.escape(item.get('updated_at_local', updated_at))}</code></td>"
-            f"<td><a href='sessions/{html.escape(session_id)}.md'>md</a></td>"
             f"<td><a href='sessions/{html.escape(session_id)}.html'>html</a></td>"
-            f"<td><a href='sessions/{html.escape(session_id)}.jsonl'>raw</a></td>"
             "</tr>"
         )
 
-    (project_dir / "index.md").write_text("\n".join(md_lines).strip() + "\n")
+    index_md = project_dir / "index.md"
+    if index_md.exists():
+        index_md.unlink()
     (project_dir / "index.html").write_text(
         f"""<!doctype html>
 <html lang="en">
@@ -425,7 +443,7 @@ def rebuild_project_index(project_dir: Path) -> None:
   <h1>Codex History Index: {html.escape(project_dir.name)}</h1>
   <table>
     <thead>
-      <tr><th>Title</th><th>Updated</th><th>Markdown</th><th>HTML</th><th>Raw</th></tr>
+      <tr><th>Title</th><th>Updated</th><th>Session</th></tr>
     </thead>
     <tbody>
       {''.join(html_rows)}

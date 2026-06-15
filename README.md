@@ -18,10 +18,8 @@ IDE extension, app, and CLI.
 
 The archiver keeps:
 
-- the raw transcript JSONL as the canonical source of truth
-- a readable Markdown export per session
-- a readable HTML export per session
-- a per-project Markdown/HTML index
+- a session HTML export per conversation
+- a per-project HTML index
 
 It is designed for people who want project chat history preserved outside the
 VS Code sidebar, with minimal risk of losing searchable conversation memory.
@@ -34,25 +32,26 @@ Codex fires a `Stop` hook at the end of a turn. The hook payload includes a
 This project uses that event to:
 
 1. determine the project root from the current working directory
-2. copy the current transcript JSONL into a private archive
-3. regenerate Markdown and HTML exports for that session
-4. regenerate a per-project session index
+2. regenerate an HTML export for that session
+3. regenerate a per-project session index
 
 ## Export Backends
 
-- Markdown: builtin only, for now
-- HTML: builtin by default, with optional PATH-based external backends
+HTML is the only archived artifact.
+
+HTML export defaults to `codex-transcript-viewer`, with optional PATH-based
+backend overrides if you want a different renderer.
 
 Supported HTML backend values:
 
-- `builtin`
-- `codex-transcripts`
 - `codex-transcript-viewer`
+- `codex-transcripts`
+- `builtin`
 
 Set with:
 
 ```bash
-export CODEX_HISTORY_HTML_BACKEND=codex-transcripts
+export CODEX_HISTORY_HTML_BACKEND=codex-transcript-viewer
 ```
 
 If the requested external backend is not installed on `PATH`, the tool falls
@@ -64,7 +63,7 @@ If you prefer to run an external exporter through a wrapper command instead of a
 plain executable on `PATH`, set:
 
 ```bash
-export CODEX_HISTORY_HTML_BACKEND_CMD='uvx --from git+https://github.com/prateek/codex-transcripts codex-transcripts json {input} -o {output_dir}'
+export CODEX_HISTORY_HTML_BACKEND_CMD='uvx --from git+https://github.com/masonc15/codex-transcript-viewer codex-transcript-viewer {input} {output}'
 ```
 
 The archiver will use that command first for HTML export and substitute:
@@ -86,13 +85,9 @@ Inside that root, archives are written like this:
 
 ```text
 projects/<project-slug>/
-  index.md
   index.html
   sessions/
-    <session-id>.jsonl
-    <session-id>.md
     <session-id>.html
-    <session-id>.meta.json
 ```
 
 ## Configure A Private Archive Directory
@@ -121,7 +116,7 @@ PowerShell:
 )
 [Environment]::SetEnvironmentVariable(
   "CODEX_HISTORY_HTML_BACKEND",
-  "codex-transcripts",
+  "codex-transcript-viewer",
   "User"
 )
 ```
@@ -141,8 +136,8 @@ For WSL2 or Ubuntu, add the export to a login-shell startup file such as
 
 ```bash
 export CODEX_HISTORY_ARCHIVE_ROOT="/mnt/c/Users/your-user/codex-history-archive"
-export CODEX_HISTORY_HTML_BACKEND="codex-transcripts"
-export CODEX_HISTORY_HTML_BACKEND_CMD='uvx --from git+https://github.com/prateek/codex-transcripts codex-transcripts json {input} -o {output_dir}'
+export CODEX_HISTORY_HTML_BACKEND="codex-transcript-viewer"
+export CODEX_HISTORY_HTML_BACKEND_CMD='uvx --from git+https://github.com/masonc15/codex-transcript-viewer codex-transcript-viewer {input} {output}'
 ```
 
 Then restart VS Code so the remote WSL extension host and Codex pick it up.
@@ -180,12 +175,12 @@ cd C:\Users\your-user\dev\codex-history-archiver
 )
 [Environment]::SetEnvironmentVariable(
   "CODEX_HISTORY_HTML_BACKEND",
-  "codex-transcripts",
+  "codex-transcript-viewer",
   "User"
 )
 [Environment]::SetEnvironmentVariable(
   "CODEX_HISTORY_HTML_BACKEND_CMD",
-  "uvx --from git+https://github.com/prateek/codex-transcripts codex-transcripts json {input} -o {output_dir}",
+  "uvx --from git+https://github.com/masonc15/codex-transcript-viewer codex-transcript-viewer {input} {output}",
   "User"
 )
 ```
@@ -251,7 +246,8 @@ If you want richer browsing or standalone export tools, these are worth a look:
 - `codex-trace-viewer`
   Local trace viewer focused on inspecting session internals.
 - `codex-transcript-viewer`
-  Single-session HTML viewer with a richer browser UI.
+  Single-session HTML viewer with sidebar filters such as `No tools`,
+  `User only`, `Answers`, and `All`.
 - `codex-transcripts`
   More capable HTML/TUI/export tool with picker flows, multi-select archives,
   `--cwd` filtering, and one-off `uvx` usage.
@@ -262,17 +258,17 @@ Those tools are useful, but this repo solves a narrower operational problem:
 
 - export automatically at the end of a Codex interaction
 - work well with the Codex VS Code extension on WSL2
-- keep raw transcripts plus readable exports
+- keep an HTML archive that is easier to browse than the VS Code history list
 - keep the archive path private and outside the public repo
 
-`codex-transcripts` is the recommended optional HTML backend because it is the
-most capable of the current external HTML exporters while still being easy to
-install and invoke from the command line.
+`codex-transcript-viewer` is the recommended HTML backend because its
+browser-side filters are a better fit when you want conversation-centric output
+instead of the full tool trace by default.
 
 ## Notes
 
-- The raw JSONL transcript is the canonical backup.
-- The Markdown and HTML are derived convenience exports.
+- The private archive keeps HTML only.
+- The HTML exporter choice determines how much tool/system detail is visible.
 - The VS Code UI may still show only a recent subset of threads, but the full
   archived session set remains available on disk.
 
@@ -335,7 +331,8 @@ Checks:
 
 - verify the Codex session is actually running in the repo you expect
 - verify that repo is a real Git checkout
-- compare the session `cwd` stored in the exported `.meta.json` file
+- open the session HTML and inspect the embedded archive metadata block in page
+  source if you need to confirm the stored `cwd`
 
 If needed, you can still find the transcript by session ID in the archive even
 if the project slug is not what you expected.
