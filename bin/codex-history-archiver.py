@@ -103,6 +103,17 @@ def extract_text_parts(parts: list[dict]) -> str:
     return "\n\n".join(collected).strip()
 
 
+def is_real_user_prompt(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("<environment_context>"):
+        return False
+    if stripped.startswith("<cwd>"):
+        return False
+    return True
+
+
 def summarize_entry(item: dict) -> tuple[str, str]:
     item_type = item.get("type", "unknown")
     payload = item.get("payload", {})
@@ -385,6 +396,15 @@ def write_session_exports(
     }
 
 
+def session_specificity(meta: dict) -> tuple[int, int, int, str]:
+    cwd = str(meta.get("cwd") or "")
+    project_root = str(meta.get("project_root") or "")
+    updated_at = str(meta.get("updated_at") or "")
+    cwd_depth = len([part for part in Path(cwd).parts if part not in {"/"}])
+    project_depth = len([part for part in Path(project_root).parts if part not in {"/"}])
+    return (cwd_depth, project_depth, len(updated_at), updated_at)
+
+
 def load_embedded_meta(html_path: Path) -> dict | None:
     text = html_path.read_text(errors="ignore")
     match = re.search(
@@ -398,6 +418,32 @@ def load_embedded_meta(html_path: Path) -> dict | None:
         return json.loads(html.unescape(match.group(1)))
     except json.JSONDecodeError:
         return None
+
+
+def prune_duplicate_session_archives(archive_root: Path, session_id: str) -> list[Path]:
+    matches = sorted(archive_root.glob(f"projects/*/sessions/{session_id}.html"))
+    if len(matches) <= 1:
+        return []
+
+    candidates: list[tuple[tuple[int, int, int, str], Path, dict]] = []
+    for path in matches:
+        meta = load_embedded_meta(path)
+        if not meta:
+            continue
+        candidates.append((session_specificity(meta), path, meta))
+
+    if not candidates:
+        return []
+
+    candidates.sort(reverse=True, key=lambda item: item[0])
+    keep_path = candidates[0][1]
+    removed: list[Path] = []
+    for _score, path, _meta in candidates[1:]:
+        if path == keep_path:
+            continue
+        path.unlink(missing_ok=True)
+        removed.append(path)
+    return removed
 
 
 def rebuild_project_index(project_dir: Path) -> None:
@@ -465,10 +511,19 @@ def build_metadata(payload: dict, parsed_transcript: dict, transcript_path: Path
         (
             entry["text"]
             for entry in parsed_transcript["entries"]
-            if entry["heading"].startswith("Message: user")
+            if entry["heading"].startswith("Message: user") and is_real_user_prompt(entry["text"])
         ),
         "",
     )
+    if not first_user:
+        first_user = next(
+            (
+                entry["text"]
+                for entry in parsed_transcript["entries"]
+                if entry["heading"].startswith("Message: user")
+            ),
+            "",
+        )
     title = session_index.get("thread_name") or first_user.splitlines()[0][:80] or session_id
     updated_at = session_index.get("updated_at") or parsed_transcript["entries"][-1]["timestamp"] if parsed_transcript["entries"] else parsed_transcript["session_meta"].get("timestamp", "")
 
@@ -521,7 +576,10 @@ def main() -> int:
     parsed = parse_transcript(transcript_path)
     project_dir, meta = build_metadata(payload, parsed, transcript_path, archive_root)
     write_session_exports(project_dir, meta, parsed["entries"], transcript_path, args.html_backend)
+    removed_duplicates = prune_duplicate_session_archives(archive_root, meta["session_id"])
     rebuild_project_index(project_dir)
+    for removed in removed_duplicates:
+        rebuild_project_index(removed.parent.parent)
 
     print(json.dumps({"continue": True}))
     return 0
