@@ -584,6 +584,9 @@ def render_html(meta: dict, turns: list[dict]) -> str:
       color: var(--muted);
       margin-bottom: 0.25rem;
     }}
+    .assistant-label {{
+      display: none;
+    }}
     .question-time {{
       color: var(--muted);
       font-size: 0.92rem;
@@ -614,7 +617,7 @@ def render_html(meta: dict, turns: list[dict]) -> str:
     }}
     .commentary-group {{
       display: grid;
-      gap: 0.55rem;
+      gap: 0.45rem;
     }}
     .commentary-group:empty {{
       display: none;
@@ -631,26 +634,28 @@ def render_html(meta: dict, turns: list[dict]) -> str:
       white-space: pre-wrap;
     }}
     .answer-block {{
-      margin-top: 1rem;
-      padding: 1rem 1.05rem;
-      border-radius: 16px;
-      background: #151a23;
-      border: 1px solid rgba(255,255,255,0.06);
+      margin-top: 0.85rem;
+      padding: 0.9rem 0 0;
+      border-radius: 0;
+      background: transparent;
+      border: 0;
+      border-top: 1px solid rgba(255,255,255,0.08);
     }}
     .tool-details {{
-      margin-top: 1rem;
-      border: 1px solid rgba(255,255,255,0.07);
-      border-radius: 14px;
-      background: #0f141d;
+      margin-top: 0.9rem;
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.02);
       overflow: hidden;
     }}
     .tool-details summary {{
       cursor: pointer;
-      padding: 0.9rem 1rem;
+      padding: 0.8rem 0.95rem;
       color: var(--muted);
+      font-size: 0.94rem;
     }}
     .tool-item {{
-      padding: 0.95rem 1rem 1rem;
+      padding: 0.9rem 0.95rem 0.95rem;
       border-top: 1px solid rgba(255,255,255,0.06);
     }}
     .tool-title {{
@@ -670,9 +675,9 @@ def render_html(meta: dict, turns: list[dict]) -> str:
     }}
     .tool-output {{
       margin: 0;
-      padding: 0.9rem;
-      border-radius: 12px;
-      background: #0b1017;
+      padding: 0.8rem;
+      border-radius: 10px;
+      background: rgba(0,0,0,0.22);
       color: #a9b8cc;
       white-space: pre-wrap;
       word-break: break-word;
