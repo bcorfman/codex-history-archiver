@@ -101,51 +101,89 @@ def extract_text_parts(parts: list[dict]) -> str:
     return "\n\n".join(collected).strip()
 
 
+def summarize_entry(item: dict) -> tuple[str, str]:
+    item_type = item.get("type", "unknown")
+    payload = item.get("payload", {})
+
+    if item_type == "session_meta":
+        session_id = payload.get("id", "unknown-session")
+        cwd = payload.get("cwd", "")
+        return "Session Meta", f"Session `{session_id}` started in `{cwd}`"
+
+    if item_type == "turn_context":
+        cwd = payload.get("cwd", "")
+        turn_id = payload.get("turn_id", "")
+        return "Turn Context", f"Turn `{turn_id}` in `{cwd}`"
+
+    if item_type == "event_msg":
+        event_payload = payload.get("type", "unknown")
+        message = payload.get("message") or payload.get("last_agent_message") or ""
+        heading = f"Event: {event_payload}"
+        return heading, message.strip()
+
+    if item_type == "response_item":
+        payload_type = payload.get("type", "unknown")
+        if payload_type == "message":
+            role = payload.get("role", "unknown")
+            content = extract_text_parts(payload.get("content", []))
+            phase = payload.get("phase")
+            phase_text = f" ({phase})" if phase else ""
+            return f"Message: {role}{phase_text}", content
+        if payload_type == "function_call":
+            name = payload.get("name", "unknown")
+            arguments = payload.get("arguments", "")
+            return f"Function Call: {name}", arguments
+        if payload_type == "function_call_output":
+            call_id = payload.get("call_id", "")
+            output = payload.get("output", "")
+            return f"Function Output: {call_id}", output
+        if payload_type == "reasoning":
+            summary = payload.get("summary", [])
+            encrypted = payload.get("encrypted_content", "")
+            reasoning_text = ""
+            if summary:
+                reasoning_text += "Summary:\n" + json.dumps(summary, indent=2)
+            if encrypted:
+                if reasoning_text:
+                    reasoning_text += "\n\n"
+                reasoning_text += "Encrypted content:\n" + encrypted
+            return "Reasoning", reasoning_text
+        return f"Response Item: {payload_type}", json.dumps(payload, indent=2)
+
+    if item_type == "web_search_call":
+        return "Web Search Call", json.dumps(payload, indent=2)
+
+    return item_type.replace("_", " ").title(), json.dumps(payload, indent=2)
+
+
 def parse_transcript(transcript_path: Path) -> dict:
     session_meta: dict = {}
-    messages: list[dict] = []
+    entries: list[dict] = []
 
     for line in transcript_path.read_text().splitlines():
         if not line.strip():
             continue
         item = json.loads(line)
-        item_type = item.get("type")
-        payload = item.get("payload", {})
+        if item.get("type") == "session_meta":
+            session_meta = item.get("payload", {})
 
-        if item_type == "session_meta":
-            session_meta = payload
-            continue
-
-        if item_type != "response_item":
-            continue
-        if payload.get("type") != "message":
-            continue
-
-        role = payload.get("role")
-        if role not in {"user", "assistant"}:
-            continue
-
-        content = payload.get("content", [])
-        text = extract_text_parts(content)
-        if not text:
-            continue
-
-        messages.append(
+        heading, text = summarize_entry(item)
+        entries.append(
             {
                 "timestamp": item.get("timestamp"),
-                "role": role,
-                "phase": payload.get("phase"),
+                "heading": heading,
                 "text": text,
+                "raw": json.dumps(item, indent=2),
             }
         )
 
     return {
         "session_meta": session_meta,
-        "messages": messages,
+        "entries": entries,
     }
 
 
-def render_markdown(meta: dict, messages: list[dict]) -> str:
+def render_markdown(meta: dict, entries: list[dict]) -> str:
     header = [
         f"# {meta['title']}",
         "",
@@ -157,33 +195,38 @@ def render_markdown(meta: dict, messages: list[dict]) -> str:
         "",
     ]
     body: list[str] = []
-    for message in messages:
-        role = "User" if message["role"] == "user" else "Assistant"
-        phase = f" ({message['phase']})" if message.get("phase") else ""
+    for entry in entries:
         body.extend(
             [
-                f"## {role}{phase}",
+                f"## {entry['heading']}",
                 "",
-                f"_Timestamp: `{message['timestamp_local']}`_",
+                f"_Timestamp: `{entry['timestamp_local']}`_",
                 "",
-                message["text"],
+                entry["text"] or "_No summarized text_",
+                "",
+                "### Raw Entry",
+                "",
+                "```json",
+                entry["raw"],
+                "```",
                 "",
             ]
         )
     return "\n".join(header + body).strip() + "\n"
 
 
-def render_html(meta: dict, messages: list[dict]) -> str:
+def render_html(meta: dict, entries: list[dict]) -> str:
     title = html.escape(meta["title"])
     rows = []
-    for message in messages:
-        role = "User" if message["role"] == "user" else "Assistant"
-        phase = f" ({message['phase']})" if message.get("phase") else ""
+    for entry in entries:
         rows.append(
             "<section class='message'>"
-            f"<h2>{html.escape(role + phase)}</h2>"
-            f"<p class='timestamp'>{html.escape(str(message['timestamp_local']))}</p>"
-            f"<pre>{html.escape(message['text'])}</pre>"
+            f"<h2>{html.escape(entry['heading'])}</h2>"
+            f"<p class='timestamp'>{html.escape(str(entry['timestamp_local']))}</p>"
+            f"<pre>{html.escape(entry['text'] or '_No summarized text_')}</pre>"
+            "<details><summary>Raw entry</summary>"
+            f"<pre>{html.escape(entry['raw'])}</pre>"
+            "</details>"
             "</section>"
         )
     return f"""<!doctype html>
@@ -237,7 +280,7 @@ def render_html(meta: dict, messages: list[dict]) -> str:
 
 
 def render_html_with_backend(
-    backend: str, transcript_path: Path, html_path: Path, meta: dict, messages: list[dict]
+    backend: str, transcript_path: Path, html_path: Path, meta: dict, entries: list[dict]
 ) -> str:
     backend_cmd = os.environ.get("CODEX_HISTORY_HTML_BACKEND_CMD")
     if backend_cmd:
@@ -287,14 +330,14 @@ def render_html_with_backend(
             if result.returncode == 0 and html_path.exists():
                 return "codex-transcript-viewer"
 
-    html_path.write_text(render_html(meta, messages))
+    html_path.write_text(render_html(meta, entries))
     return "builtin"
 
 
 def write_session_exports(
     project_dir: Path,
     session_meta: dict,
-    messages: list[dict],
+    entries: list[dict],
     transcript_path: Path,
     html_backend: str,
 ) -> dict:
@@ -308,11 +351,11 @@ def write_session_exports(
     meta_path = sessions_dir / f"{session_id}.meta.json"
 
     shutil.copyfile(transcript_path, raw_path)
-    md_path.write_text(render_markdown(session_meta, messages))
+    md_path.write_text(render_markdown(session_meta, entries))
     session_meta = dict(session_meta)
     session_meta["html_backend_requested"] = html_backend
     session_meta["html_backend_used"] = render_html_with_backend(
-        html_backend, transcript_path, html_path, session_meta, messages
+        html_backend, transcript_path, html_path, session_meta, entries
     )
     meta_path.write_text(json.dumps(session_meta, indent=2) + "\n")
 
@@ -400,16 +443,23 @@ def build_metadata(payload: dict, parsed_transcript: dict, transcript_path: Path
     project_slug = sanitize_slug(project_root.name)
     session_id = payload.get("session_id") or parsed_transcript["session_meta"].get("id") or transcript_path.stem
     session_index = load_session_index().get(session_id, {})
-    first_user = next((m["text"] for m in parsed_transcript["messages"] if m["role"] == "user"), "")
+    first_user = next(
+        (
+            entry["text"]
+            for entry in parsed_transcript["entries"]
+            if entry["heading"].startswith("Message: user")
+        ),
+        "",
+    )
     title = session_index.get("thread_name") or first_user.splitlines()[0][:80] or session_id
-    updated_at = session_index.get("updated_at") or parsed_transcript["messages"][-1]["timestamp"] if parsed_transcript["messages"] else parsed_transcript["session_meta"].get("timestamp", "")
+    updated_at = session_index.get("updated_at") or parsed_transcript["entries"][-1]["timestamp"] if parsed_transcript["entries"] else parsed_transcript["session_meta"].get("timestamp", "")
 
-    localized_messages = []
-    for message in parsed_transcript["messages"]:
-        localized = dict(message)
-        localized["timestamp_local"] = format_local_timestamp(message.get("timestamp"))
-        localized_messages.append(localized)
-    parsed_transcript["messages"] = localized_messages
+    localized_entries = []
+    for entry in parsed_transcript["entries"]:
+        localized = dict(entry)
+        localized["timestamp_local"] = format_local_timestamp(entry.get("timestamp"))
+        localized_entries.append(localized)
+    parsed_transcript["entries"] = localized_entries
 
     project_dir = archive_root / "projects" / project_slug
     meta = {
@@ -452,7 +502,7 @@ def main() -> int:
 
     parsed = parse_transcript(transcript_path)
     project_dir, meta = build_metadata(payload, parsed, transcript_path, archive_root)
-    write_session_exports(project_dir, meta, parsed["messages"], transcript_path, args.html_backend)
+    write_session_exports(project_dir, meta, parsed["entries"], transcript_path, args.html_backend)
     rebuild_project_index(project_dir)
 
     print(json.dumps({"continue": True}))
